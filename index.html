@@ -8,9 +8,17 @@
   </head>
   <body>
     <div id="app"></div>
-    <!-- UI Container for the score -->
+    <!-- UI Container for the score and time -->
     <div id="ui-container">
-      <div id="score-display">Score: <span id="score-value">0</span></div>
+      <div id="time-display">Time: <span id="time-value">60</span></div>
+      <div id="score-display">Score: <span id="score-value">0</span> / 2000</div>
+    </div>
+
+    <!-- Result Screen -->
+    <div id="result-screen" class="hidden">
+      <h1 id="result-title">MISSION CLEARED!</h1>
+      <p id="result-score">Final Score: 0</p>
+      <button id="restart-button">Play Again</button>
     </div>
     <!-- Minimap container -->
     <div id="minimap"></div>

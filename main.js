@@ -2,6 +2,10 @@ import * as THREE from 'three';
 
 // --- GAME STATE ---
 let score = 0;
+let targetScore = 2000;
+let timeLeft = 60;
+let gameState = 'playing'; // 'playing', 'clear', 'over'
+let lastTick = Date.now();
 
 // --- SCENE SETUP ---
 const scene = new THREE.Scene();
@@ -134,6 +138,8 @@ const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
 window.addEventListener('pointerdown', (event) => {
+    if (gameState !== 'playing') return;
+
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -277,7 +283,7 @@ function spawnVehicle() {
 
 // Spawn a car regularly
 setInterval(() => {
-    if (vehicles.length < 60) {
+    if (gameState === 'playing' && vehicles.length < 60) {
         spawnVehicle();
     }
 }, 800);
@@ -389,121 +395,139 @@ function showFloatingText(position, text) {
 function animate() {
     requestAnimationFrame(animate);
 
-    // --- LOGIC UPDATES ---
-    // Move vehicles
-    for (let i = vehicles.length - 1; i >= 0; i--) {
-        const v = vehicles[i];
-        const data = v.userData;
-        const currentPos = v.position[data.axis];
+    if (gameState === 'playing') {
+        const now = Date.now();
+        if (now - lastTick >= 1000) {
+            timeLeft--;
+            const timeValueEl = document.getElementById('time-value');
+            if (timeValueEl) timeValueEl.innerText = timeLeft;
+            lastTick = now;
 
-        let shouldStop = false;
-
-        // Find the next intersection the vehicle is approaching
-        if (data.passedLights < data.checkLights.length) {
-            const nextLightData = data.checkLights[data.passedLights];
-            const distToStop = (nextLightData.stopLine - currentPos) * data.dir;
-
-            // Re-evaluate if past the intersection center to increment passedLights
-            const intersectionCenter = nextLightData.intersectionCenter;
-            if ((currentPos - intersectionCenter) * data.dir > 0) {
-                data.passedLights++;
-            } else {
-                // If approaching the stop line
-                const isHorizontal = data.axis === 'x';
-                const lightIsBlueForUs = isHorizontal ? nextLightData.light.userData.horizontalBlue : !nextLightData.light.userData.horizontalBlue;
-
-                // If the light is red for this lane
-                if (!lightIsBlueForUs) {
-                    if (distToStop > 0 && distToStop < speed * 2) {
-                        shouldStop = true;
-                    }
-                }
+            if (timeLeft <= 0) {
+                gameState = score >= targetScore ? 'clear' : 'over';
+                showResult();
             }
         }
+    }
 
-        // Avoid rear-ending cars in the same lane
-        if (!shouldStop) {
-            let vehicleAheadDistance = Infinity;
-            for (let j = 0; j < vehicles.length; j++) {
-                if (i === j) continue;
-                const vB = vehicles[j];
-                const dataB = vB.userData;
+    // --- LOGIC UPDATES ---
+    if (gameState === 'playing') {
+        // Move vehicles
+        for (let i = vehicles.length - 1; i >= 0; i--) {
+            const v = vehicles[i];
+            const data = v.userData;
+            const currentPos = v.position[data.axis];
 
-                // Check same axis and same direction
-                if (data.axis === dataB.axis && data.dir === dataB.dir) {
-                    const orthoAxis = data.axis === 'x' ? 'z' : 'x';
-                    // Check if in the same lane (using a small tolerance)
-                    if (Math.abs(v.position[orthoAxis] - vB.position[orthoAxis]) < 1) {
-                        const dist = (vB.position[data.axis] - currentPos) * data.dir;
-                        // If vB is physically ahead and closer than the closest found so far
-                        if (dist > 0 && dist < vehicleAheadDistance) {
-                            vehicleAheadDistance = dist;
+            let shouldStop = false;
+
+            // Find the next intersection the vehicle is approaching
+            if (data.passedLights < data.checkLights.length) {
+                const nextLightData = data.checkLights[data.passedLights];
+                const distToStop = (nextLightData.stopLine - currentPos) * data.dir;
+
+                // Re-evaluate if past the intersection center to increment passedLights
+                const intersectionCenter = nextLightData.intersectionCenter;
+                if ((currentPos - intersectionCenter) * data.dir > 0) {
+                    data.passedLights++;
+                } else {
+                    // If approaching the stop line
+                    const isHorizontal = data.axis === 'x';
+                    const lightIsBlueForUs = isHorizontal ? nextLightData.light.userData.horizontalBlue : !nextLightData.light.userData.horizontalBlue;
+
+                    // If the light is red for this lane
+                    if (!lightIsBlueForUs) {
+                        if (distToStop > 0 && distToStop < speed * 2) {
+                            shouldStop = true;
                         }
                     }
                 }
             }
-            // Vehicle length is 4 units. Gap is 1 unit.
-            if (vehicleAheadDistance < 5) {
-                shouldStop = true;
+
+            // Avoid rear-ending cars in the same lane
+            if (!shouldStop) {
+                let vehicleAheadDistance = Infinity;
+                for (let j = 0; j < vehicles.length; j++) {
+                    if (i === j) continue;
+                    const vB = vehicles[j];
+                    const dataB = vB.userData;
+
+                    // Check same axis and same direction
+                    if (data.axis === dataB.axis && data.dir === dataB.dir) {
+                        const orthoAxis = data.axis === 'x' ? 'z' : 'x';
+                        // Check if in the same lane (using a small tolerance)
+                        if (Math.abs(v.position[orthoAxis] - vB.position[orthoAxis]) < 1) {
+                            const dist = (vB.position[data.axis] - currentPos) * data.dir;
+                            // If vB is physically ahead and closer than the closest found so far
+                            if (dist > 0 && dist < vehicleAheadDistance) {
+                                vehicleAheadDistance = dist;
+                            }
+                        }
+                    }
+                }
+                // Vehicle length is 4 units. Gap is 1 unit.
+                if (vehicleAheadDistance < 5) {
+                    shouldStop = true;
+                }
             }
-        }
 
-        if (!shouldStop) {
-            v.position[data.axis] += speed * data.dir;
-        }
+            if (!shouldStop) {
+                v.position[data.axis] += speed * data.dir;
+            }
 
-        // Cleanup if out of bounds
-        if (Math.abs(v.position[data.axis]) > spawnDist + 10) {
-            scene.remove(v);
-            vehicles.splice(i, 1);
-        }
-    }
-
-    // Collision Check (O(N^2) but N < 60 so it's fine)
-    const boxA = new THREE.Box3();
-    const boxB = new THREE.Box3();
-
-    // We iterate backwards because we might remove elements during the loop
-    for (let i = vehicles.length - 1; i >= 0; i--) {
-        const vA = vehicles[i];
-        if (!vA.userData.active) vA.userData.active = true; // flag to prevent double processing
-
-        boxA.setFromObject(vA);
-
-        for (let j = i - 1; j >= 0; j--) {
-            const vB = vehicles[j];
-            if (!vB.userData.active) continue;
-
-            boxB.setFromObject(vB);
-
-            if (boxA.intersectsBox(boxB)) {
-                // Collision!
-                // 1. Remove both from scene
-                scene.remove(vA);
-                scene.remove(vB);
-
-                // 2. Mark inactive so they aren't processed again this frame
-                vA.userData.active = false;
-                vB.userData.active = false;
-
-                // 3. Remove from array (safely since we iterate backwards)
-                // vA is at i, vB is at j (j < i)
+            // Cleanup if out of bounds
+            if (Math.abs(v.position[data.axis]) > spawnDist + 10) {
+                scene.remove(v);
                 vehicles.splice(i, 1);
-                vehicles.splice(j, 1);
-
-                // 4. Update Score
-                score += 100;
-                document.getElementById('score-value').innerText = score;
-
-                // 5. Explosion Effect
-                const midpoint = vA.position.clone().lerp(vB.position, 0.5);
-                createExplosion(midpoint);
-
-                // Break inner loop since vA is destroyed and can't hit anything else
-                break;
             }
         }
-    }
+
+        // Collision Check (O(N^2) but N < 60 so it's fine)
+        const boxA = new THREE.Box3();
+        const boxB = new THREE.Box3();
+
+        // We iterate backwards because we might remove elements during the loop
+        for (let i = vehicles.length - 1; i >= 0; i--) {
+            const vA = vehicles[i];
+            if (!vA.userData.active) vA.userData.active = true; // flag to prevent double processing
+
+            boxA.setFromObject(vA);
+
+            for (let j = i - 1; j >= 0; j--) {
+                const vB = vehicles[j];
+                if (!vB.userData.active) continue;
+
+                boxB.setFromObject(vB);
+
+                if (boxA.intersectsBox(boxB)) {
+                    // Collision!
+                    // 1. Remove both from scene
+                    scene.remove(vA);
+                    scene.remove(vB);
+
+                    // 2. Mark inactive so they aren't processed again this frame
+                    vA.userData.active = false;
+                    vB.userData.active = false;
+
+                    // 3. Remove from array (safely since we iterate backwards)
+                    // vA is at i, vB is at j (j < i)
+                    vehicles.splice(i, 1);
+                    vehicles.splice(j, 1);
+
+                    // 4. Update Score
+                    score += 100;
+                    document.getElementById('score-value').innerText = score;
+
+                    // 5. Explosion Effect
+                    const midpoint = vA.position.clone().lerp(vB.position, 0.5);
+                    createExplosion(midpoint);
+
+                    // Break inner loop since vA is destroyed and can't hit anything else
+                    break;
+                }
+            }
+        } // End collision check loops
+
+    } // End if (gameState === 'playing')
 
     updateExplosions();
 
@@ -557,3 +581,58 @@ window.addEventListener('resize', () => {
 
 // Start loop
 animate();
+
+function showResult() {
+    const resultScreenEl = document.getElementById('result-screen');
+    const resultTitleEl = document.getElementById('result-title');
+    const resultScoreEl = document.getElementById('result-score');
+
+    if (resultScreenEl) {
+        resultScreenEl.classList.remove('hidden');
+        if (resultScoreEl) resultScoreEl.innerText = `Final Score: ${score}`;
+        if (resultTitleEl) {
+            if (gameState === 'clear') {
+                resultTitleEl.innerText = 'MISSION CLEARED!';
+                resultTitleEl.style.color = '#4CAF50';
+            } else {
+                resultTitleEl.innerText = 'TIME UP...';
+                resultTitleEl.style.color = '#F44336';
+            }
+        }
+    }
+}
+
+const restartBtn = document.getElementById('restart-button');
+if (restartBtn) {
+    restartBtn.addEventListener('click', () => {
+        score = 0;
+        timeLeft = 60;
+        gameState = 'playing';
+        lastTick = Date.now();
+
+        const scoreValueEl = document.getElementById('score-value');
+        const timeValueEl = document.getElementById('time-value');
+        const resultScreenEl = document.getElementById('result-screen');
+
+        if (scoreValueEl) scoreValueEl.innerText = score;
+        if (timeValueEl) timeValueEl.innerText = timeLeft;
+        if (resultScreenEl) resultScreenEl.classList.add('hidden');
+
+        // Clear vehicles
+        vehicles.forEach(v => scene.remove(v));
+        vehicles.length = 0;
+
+        // Clear explosions
+        explosions.forEach(e => {
+            if (!e.userData.isLight && e.material) e.material.dispose();
+            scene.remove(e);
+        });
+        explosions.length = 0;
+
+        // Reset traffic lights
+        trafficLights.forEach(lightGroup => {
+            lightGroup.userData.horizontalBlue = true;
+            lightGroup.userData.visualMat.color.setHex(0x0088ff);
+        });
+    });
+}
