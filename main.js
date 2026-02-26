@@ -21,7 +21,7 @@ document.getElementById('app').appendChild(renderer.domElement);
 // --- CAMERAS ---
 // 1. Main Camera (Top-down perspective)
 const mainCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-mainCamera.position.set(0, 75, 35); // Elevated higher to see the grid
+mainCamera.position.set(0, 95, 45); // Elevated higher to see the grid
 mainCamera.lookAt(0, 0, 0);
 
 // 2. Minimap Camera (Orthographic, pure top-down)
@@ -47,7 +47,7 @@ directionalLight.castShadow = true;
 scene.add(directionalLight);
 
 // --- ENVIRONMENT (Intersection Grid) ---
-const roadWidthV = 16;
+const roadWidthV = 20;
 const roadWidthH = 24;
 const gridSpacing = 20; // Distance from center for each road
 const roadLength = 120;
@@ -535,11 +535,11 @@ function animate() {
     if (shakeTime > 0) {
         const magnitude = (shakeTime / 15) * 1.5;
         mainCamera.position.x = 0 + (Math.random() - 0.5) * magnitude;
-        mainCamera.position.y = 75 + (Math.random() - 0.5) * magnitude;
-        mainCamera.position.z = 35 + (Math.random() - 0.5) * magnitude;
+        mainCamera.position.y = 95 + (Math.random() - 0.5) * magnitude;
+        mainCamera.position.z = 45 + (Math.random() - 0.5) * magnitude;
         shakeTime--;
     } else {
-        mainCamera.position.set(0, 75, 35);
+        mainCamera.position.set(0, 95, 45);
     }
     mainCamera.lookAt(0, 0, 0);
 
