@@ -17,7 +17,7 @@ document.getElementById('app').appendChild(renderer.domElement);
 // --- CAMERAS ---
 // 1. Main Camera (Top-down perspective)
 const mainCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-mainCamera.position.set(0, 60, 30); // Elevated higher to see the grid
+mainCamera.position.set(0, 75, 35); // Elevated higher to see the grid
 mainCamera.lookAt(0, 0, 0);
 
 // 2. Minimap Camera (Orthographic, pure top-down)
@@ -43,26 +43,29 @@ directionalLight.castShadow = true;
 scene.add(directionalLight);
 
 // --- ENVIRONMENT (Intersection Grid) ---
-const roadWidth = 10;
+const roadWidthV = 16;
+const roadWidthH = 24;
 const gridSpacing = 20; // Distance from center for each road
 const roadLength = 120;
 const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x444444 });
 
 // 2 Horizontal Roads (Top, Bottom)
-const roadHTop = new THREE.Mesh(new THREE.BoxGeometry(roadLength, 0.5, roadWidth), roadMaterial);
+// They use roadWidthH for their depth
+const roadHTop = new THREE.Mesh(new THREE.BoxGeometry(roadLength, 0.5, roadWidthH), roadMaterial);
 roadHTop.position.set(0, -0.25, -gridSpacing);
 scene.add(roadHTop);
 
-const roadHBot = new THREE.Mesh(new THREE.BoxGeometry(roadLength, 0.5, roadWidth), roadMaterial);
+const roadHBot = new THREE.Mesh(new THREE.BoxGeometry(roadLength, 0.5, roadWidthH), roadMaterial);
 roadHBot.position.set(0, -0.25, gridSpacing);
 scene.add(roadHBot);
 
 // 2 Vertical Roads (Left, Right)
-const roadVLeft = new THREE.Mesh(new THREE.BoxGeometry(roadWidth, 0.5, roadLength), roadMaterial);
+// They use roadWidthV for their width
+const roadVLeft = new THREE.Mesh(new THREE.BoxGeometry(roadWidthV, 0.5, roadLength), roadMaterial);
 roadVLeft.position.set(-gridSpacing, -0.24, 0);
 scene.add(roadVLeft);
 
-const roadVRight = new THREE.Mesh(new THREE.BoxGeometry(roadWidth, 0.5, roadLength), roadMaterial);
+const roadVRight = new THREE.Mesh(new THREE.BoxGeometry(roadWidthV, 0.5, roadLength), roadMaterial);
 roadVRight.position.set(gridSpacing, -0.24, 0);
 scene.add(roadVRight);
 
@@ -75,7 +78,8 @@ const intersectionCenters = [
 ];
 
 intersectionCenters.forEach(center => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(roadWidth, 0.5, roadWidth), new THREE.MeshStandardMaterial({ color: 0x555555 }));
+    // Intersections are now rectangles: roadWidthV wide, roadWidthH deep
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(roadWidthV, 0.5, roadWidthH), new THREE.MeshStandardMaterial({ color: 0x555555 }));
     mesh.position.set(center.x, -0.23, center.z);
     scene.add(mesh);
 });
@@ -86,8 +90,8 @@ const trafficLights = [];
 // Helper to create a single traffic light per intersection
 function createTrafficLight(x, z) {
     const group = new THREE.Group();
-    // Position slightly offset from true center so cars don't drive right through the visual mesh
-    group.position.set(x + 2, 0.5, z - 2);
+    // Position at the top-right corner of the intersection slightly offset
+    group.position.set(x + roadWidthV / 2 + 1, 0.5, z - roadWidthH / 2 - 1);
 
     // Default state: Horizontal cars can go (Blue), Vertical cars stop (Red)
     group.userData = { horizontalBlue: true };
@@ -160,22 +164,23 @@ const speed = 0.2; // Vehicle speed (slowed down from 0.3)
 
 // 8 Spawners: 2 ends for each of the 4 roads.
 // 'route' defines the axis ('x' or 'z'), fixed coord ('z' or 'x'), and direction (-1 or +1)
+// We use road widths to center the cars in the appropriate lanes.
 const spawners = [
     // --- Vertical Roads (Movement along Z axis) ---
     // Left vertical road
-    { pos: new THREE.Vector3(-gridSpacing + 2.5, 0.5, -spawnDist), moveAxis: 'z', dir: 1 },  // From Top going Down
-    { pos: new THREE.Vector3(-gridSpacing - 2.5, 0.5, spawnDist), moveAxis: 'z', dir: -1 }, // From Bot going Up
+    { pos: new THREE.Vector3(-gridSpacing + roadWidthV / 4, 0.5, -spawnDist), moveAxis: 'z', dir: 1 },  // From Top going Down
+    { pos: new THREE.Vector3(-gridSpacing - roadWidthV / 4, 0.5, spawnDist), moveAxis: 'z', dir: -1 }, // From Bot going Up
     // Right vertical road
-    { pos: new THREE.Vector3(gridSpacing + 2.5, 0.5, -spawnDist), moveAxis: 'z', dir: 1 },   // From Top going Down
-    { pos: new THREE.Vector3(gridSpacing - 2.5, 0.5, spawnDist), moveAxis: 'z', dir: -1 },  // From Bot going Up
+    { pos: new THREE.Vector3(gridSpacing + roadWidthV / 4, 0.5, -spawnDist), moveAxis: 'z', dir: 1 },   // From Top going Down
+    { pos: new THREE.Vector3(gridSpacing - roadWidthV / 4, 0.5, spawnDist), moveAxis: 'z', dir: -1 },  // From Bot going Up
 
     // --- Horizontal Roads (Movement along X axis) ---
     // Top horizontal road
-    { pos: new THREE.Vector3(-spawnDist, 0.5, -gridSpacing - 2.5), moveAxis: 'x', dir: 1 },  // From Left going Right
-    { pos: new THREE.Vector3(spawnDist, 0.5, -gridSpacing + 2.5), moveAxis: 'x', dir: -1 }, // From Right going Left
+    { pos: new THREE.Vector3(-spawnDist, 0.5, -gridSpacing - roadWidthH / 4), moveAxis: 'x', dir: 1 },  // From Left going Right
+    { pos: new THREE.Vector3(spawnDist, 0.5, -gridSpacing + roadWidthH / 4), moveAxis: 'x', dir: -1 }, // From Right going Left
     // Bottom horizontal road
-    { pos: new THREE.Vector3(-spawnDist, 0.5, gridSpacing - 2.5), moveAxis: 'x', dir: 1 },   // From Left going Right
-    { pos: new THREE.Vector3(spawnDist, 0.5, gridSpacing + 2.5), moveAxis: 'x', dir: -1 }   // From Right going Left
+    { pos: new THREE.Vector3(-spawnDist, 0.5, gridSpacing - roadWidthH / 4), moveAxis: 'x', dir: 1 },   // From Left going Right
+    { pos: new THREE.Vector3(spawnDist, 0.5, gridSpacing + roadWidthH / 4), moveAxis: 'x', dir: -1 }   // From Right going Left
 ];
 
 function spawnVehicle() {
@@ -213,37 +218,57 @@ function spawnVehicle() {
     // Figure out which traffic lights this spawner will encounter based on lane
     // Each vehicle passes 2 intersections.
     if (spawner.moveAxis === 'z') {
-        // Vertical road. Intersections at z = -gridSpacing and z = +gridSpacing.
-        // Stop line is a few units before the center.
+        // Vertical road traversing horizontal roads (so we cross roadWidthH)
         let firstLightZ = (spawner.dir > 0) ? -gridSpacing : gridSpacing;
         let secondLightZ = (spawner.dir > 0) ? gridSpacing : -gridSpacing;
 
         // Find the light object for this specific x intersection
         let x = vehicleGroup.position.x > 0 ? gridSpacing : -gridSpacing;
 
+        // Stop line is half the horizontal road width + a buffer
+        let stopDist = (roadWidthH / 2) + 2;
+
+        let tlX = x + roadWidthV / 2 + 1;
+        let tlZ1 = firstLightZ - roadWidthH / 2 - 1;
+        let tlZ2 = secondLightZ - roadWidthH / 2 - 1;
+
         vehicleGroup.userData.checkLights.push({
-            light: trafficLights.find(l => Math.abs(l.position.x - x) < 5 && Math.abs(l.position.z - firstLightZ) < 5),
-            stopLine: firstLightZ - (7 * spawner.dir) // 7 units before the intersection center
+            light: trafficLights.find(l => Math.abs(l.position.x - tlX) < 5 && Math.abs(l.position.z - tlZ1) < 5),
+            stopLine: firstLightZ - (stopDist * spawner.dir)
+            // Intersection center for intersection hit detection 
         });
+        vehicleGroup.userData.checkLights[0].intersectionCenter = firstLightZ;
+
         vehicleGroup.userData.checkLights.push({
-            light: trafficLights.find(l => Math.abs(l.position.x - x) < 5 && Math.abs(l.position.z - secondLightZ) < 5),
-            stopLine: secondLightZ - (7 * spawner.dir)
+            light: trafficLights.find(l => Math.abs(l.position.x - tlX) < 5 && Math.abs(l.position.z - tlZ2) < 5),
+            stopLine: secondLightZ - (stopDist * spawner.dir)
         });
+        vehicleGroup.userData.checkLights[1].intersectionCenter = secondLightZ;
+
     } else {
-        // Horizontal road. Intersections at x = -gridSpacing and x = +gridSpacing.
+        // Horizontal road traversing vertical roads (so we cross roadWidthV)
         let firstLightX = (spawner.dir > 0) ? -gridSpacing : gridSpacing;
         let secondLightX = (spawner.dir > 0) ? gridSpacing : -gridSpacing;
 
         let z = vehicleGroup.position.z > 0 ? gridSpacing : -gridSpacing;
 
+        let stopDist = (roadWidthV / 2) + 2;
+
+        let tlZ = z - roadWidthH / 2 - 1;
+        let tlX1 = firstLightX + roadWidthV / 2 + 1;
+        let tlX2 = secondLightX + roadWidthV / 2 + 1;
+
         vehicleGroup.userData.checkLights.push({
-            light: trafficLights.find(l => Math.abs(l.position.z - z) < 5 && Math.abs(l.position.x - firstLightX) < 5),
-            stopLine: firstLightX - (7 * spawner.dir)
+            light: trafficLights.find(l => Math.abs(l.position.z - tlZ) < 5 && Math.abs(l.position.x - tlX1) < 5),
+            stopLine: firstLightX - (stopDist * spawner.dir)
         });
+        vehicleGroup.userData.checkLights[0].intersectionCenter = firstLightX;
+
         vehicleGroup.userData.checkLights.push({
-            light: trafficLights.find(l => Math.abs(l.position.z - z) < 5 && Math.abs(l.position.x - secondLightX) < 5),
-            stopLine: secondLightX - (7 * spawner.dir)
+            light: trafficLights.find(l => Math.abs(l.position.z - tlZ) < 5 && Math.abs(l.position.x - tlX2) < 5),
+            stopLine: secondLightX - (stopDist * spawner.dir)
         });
+        vehicleGroup.userData.checkLights[1].intersectionCenter = secondLightX;
     }
 
     scene.add(vehicleGroup);
@@ -379,7 +404,7 @@ function animate() {
             const distToStop = (nextLightData.stopLine - currentPos) * data.dir;
 
             // Re-evaluate if past the intersection center to increment passedLights
-            const intersectionCenter = nextLightData.stopLine + (7 * data.dir);
+            const intersectionCenter = nextLightData.intersectionCenter;
             if ((currentPos - intersectionCenter) * data.dir > 0) {
                 data.passedLights++;
             } else {
@@ -393,6 +418,33 @@ function animate() {
                         shouldStop = true;
                     }
                 }
+            }
+        }
+
+        // Avoid rear-ending cars in the same lane
+        if (!shouldStop) {
+            let vehicleAheadDistance = Infinity;
+            for (let j = 0; j < vehicles.length; j++) {
+                if (i === j) continue;
+                const vB = vehicles[j];
+                const dataB = vB.userData;
+
+                // Check same axis and same direction
+                if (data.axis === dataB.axis && data.dir === dataB.dir) {
+                    const orthoAxis = data.axis === 'x' ? 'z' : 'x';
+                    // Check if in the same lane (using a small tolerance)
+                    if (Math.abs(v.position[orthoAxis] - vB.position[orthoAxis]) < 1) {
+                        const dist = (vB.position[data.axis] - currentPos) * data.dir;
+                        // If vB is physically ahead and closer than the closest found so far
+                        if (dist > 0 && dist < vehicleAheadDistance) {
+                            vehicleAheadDistance = dist;
+                        }
+                    }
+                }
+            }
+            // Vehicle length is 4 units. Gap is 1 unit.
+            if (vehicleAheadDistance < 5) {
+                shouldStop = true;
             }
         }
 
@@ -459,11 +511,11 @@ function animate() {
     if (shakeTime > 0) {
         const magnitude = (shakeTime / 15) * 1.5;
         mainCamera.position.x = 0 + (Math.random() - 0.5) * magnitude;
-        mainCamera.position.y = 60 + (Math.random() - 0.5) * magnitude;
-        mainCamera.position.z = 30 + (Math.random() - 0.5) * magnitude;
+        mainCamera.position.y = 75 + (Math.random() - 0.5) * magnitude;
+        mainCamera.position.z = 35 + (Math.random() - 0.5) * magnitude;
         shakeTime--;
     } else {
-        mainCamera.position.set(0, 60, 30);
+        mainCamera.position.set(0, 75, 35);
     }
     mainCamera.lookAt(0, 0, 0);
 
