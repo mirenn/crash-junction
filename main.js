@@ -7,6 +7,15 @@ let timeLeft = 60;
 let gameState = 'playing'; // 'playing', 'clear', 'over'
 let lastTick = Date.now();
 
+// --- PLAYER CHARACTER STATE ---
+const MAX_HP = 3;
+let playerHP = MAX_HP;
+let playerInvincible = 0; // Invincibility frames counter
+const PLAYER_SPEED = 0.18;
+let playerTarget = null; // {x, z} click target
+const MAX_BARRICADES = 3;
+const barricades = [];
+
 // --- SCENE SETUP ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x2a2a2a); // Dark asphalt-ish background
@@ -88,6 +97,88 @@ intersectionCenters.forEach(center => {
     scene.add(mesh);
 });
 
+// --- GROUND PLANES (for click raycasting) ---
+const groundPlanes = [];
+[roadHTop, roadHBot, roadVLeft, roadVRight].forEach(r => groundPlanes.push(r));
+intersectionCenters.forEach((center, idx) => {
+    // intersection meshes were already added; reference by re-creating a ground quad
+});
+// Add a large invisible ground plane for raycasting
+const groundPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(300, 300),
+    new THREE.MeshBasicMaterial({ visible: false })
+);
+groundPlane.rotation.x = -Math.PI / 2;
+groundPlane.position.y = 0;
+scene.add(groundPlane);
+
+// --- PLAYER CHARACTER ---
+function createPlayerCharacter() {
+    const playerGroup = new THREE.Group();
+
+    // Body
+    const bodyGeom = new THREE.BoxGeometry(1.2, 2, 0.8);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xff8800 });
+    const body = new THREE.Mesh(bodyGeom, bodyMat);
+    body.position.y = 2.5;
+    playerGroup.add(body);
+
+    // Head
+    const headGeom = new THREE.SphereGeometry(0.5, 8, 8);
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xffcc88 });
+    const head = new THREE.Mesh(headGeom, headMat);
+    head.position.y = 4;
+    playerGroup.add(head);
+
+    // Left Leg
+    const legGeom = new THREE.BoxGeometry(0.4, 1.2, 0.4);
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x3355aa });
+    const leftLeg = new THREE.Mesh(legGeom, legMat);
+    leftLeg.position.set(-0.3, 1, 0);
+    playerGroup.add(leftLeg);
+
+    // Right Leg
+    const rightLeg = new THREE.Mesh(legGeom, legMat.clone());
+    rightLeg.position.set(0.3, 1, 0);
+    playerGroup.add(rightLeg);
+
+    // Left Arm
+    const armGeom = new THREE.BoxGeometry(0.3, 1.4, 0.3);
+    const armMat = new THREE.MeshStandardMaterial({ color: 0xff8800 });
+    const leftArm = new THREE.Mesh(armGeom, armMat);
+    leftArm.position.set(-0.75, 2.6, 0);
+    playerGroup.add(leftArm);
+
+    // Right Arm
+    const rightArm = new THREE.Mesh(armGeom, armMat.clone());
+    rightArm.position.set(0.75, 2.6, 0);
+    playerGroup.add(rightArm);
+
+    // Minimap blip (large, bright, on layer 1)
+    const blipGeom = new THREE.BoxGeometry(6, 1, 6);
+    const blipMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+    const blipMesh = new THREE.Mesh(blipGeom, blipMat);
+    blipMesh.position.y = 10;
+    blipMesh.layers.set(1);
+    playerGroup.add(blipMesh);
+
+    playerGroup.position.set(0, 0, 0); // Start at center
+    scene.add(playerGroup);
+
+    return playerGroup;
+}
+
+const player = createPlayerCharacter();
+
+// Move target indicator
+const targetIndicatorGeom = new THREE.RingGeometry(0.8, 1.2, 16);
+const targetIndicatorMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
+const targetIndicator = new THREE.Mesh(targetIndicatorGeom, targetIndicatorMat);
+targetIndicator.rotation.x = -Math.PI / 2;
+targetIndicator.position.y = 0.1;
+targetIndicator.visible = false;
+scene.add(targetIndicator);
+
 // --- TRAFFIC LIGHTS ---
 const trafficLights = [];
 
@@ -144,10 +235,11 @@ window.addEventListener('pointerdown', (event) => {
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
     raycaster.setFromCamera(mouse, mainCamera);
-    const intersects = raycaster.intersectObjects(hitboxes);
 
-    if (intersects.length > 0) {
-        const lightGroup = intersects[0].object.userData.parentLight;
+    // Priority 1: Traffic light hitboxes
+    const lightIntersects = raycaster.intersectObjects(hitboxes);
+    if (lightIntersects.length > 0) {
+        const lightGroup = lightIntersects[0].object.userData.parentLight;
 
         // Toggle state
         lightGroup.userData.horizontalBlue = !lightGroup.userData.horizontalBlue;
@@ -158,8 +250,81 @@ window.addEventListener('pointerdown', (event) => {
         } else {
             lightGroup.userData.visualMat.color.setHex(0xff0000); // Red
         }
+        return; // Don't move player when clicking a light
+    }
+
+    // Priority 2: Click-to-move on ground
+    const groundIntersects = raycaster.intersectObject(groundPlane);
+    if (groundIntersects.length > 0) {
+        const point = groundIntersects[0].point;
+        playerTarget = { x: point.x, z: point.z };
+
+        // Show target indicator
+        targetIndicator.position.set(point.x, 0.1, point.z);
+        targetIndicator.visible = true;
     }
 });
+
+// --- BARRICADE PLACEMENT (E key) ---
+window.addEventListener('keydown', (event) => {
+    if (gameState !== 'playing') return;
+
+    if (event.key === 'e' || event.key === 'E') {
+        placeBarricade();
+    }
+});
+
+function placeBarricade() {
+    // Check if we have slots remaining
+    if (barricades.length >= MAX_BARRICADES) {
+        // Remove oldest barricade
+        const oldest = barricades.shift();
+        scene.remove(oldest);
+    }
+
+    const barricadeGroup = new THREE.Group();
+
+    // Main body - striped barrier look
+    const barGeom = new THREE.BoxGeometry(4, 1.5, 1);
+    const barMat = new THREE.MeshStandardMaterial({ color: 0xff3300 });
+    const bar = new THREE.Mesh(barGeom, barMat);
+    bar.position.y = 0.75;
+    barricadeGroup.add(bar);
+
+    // Warning stripe
+    const stripeGeom = new THREE.BoxGeometry(4.1, 0.4, 1.1);
+    const stripeMat = new THREE.MeshStandardMaterial({ color: 0xffcc00 });
+    const stripe = new THREE.Mesh(stripeGeom, stripeMat);
+    stripe.position.y = 0.75;
+    barricadeGroup.add(stripe);
+
+    // Minimap blip for barricade
+    const blipGeom = new THREE.BoxGeometry(4, 1, 4);
+    const blipMat = new THREE.MeshBasicMaterial({ color: 0xff3300 });
+    const blipMesh = new THREE.Mesh(blipGeom, blipMat);
+    blipMesh.position.y = 10;
+    blipMesh.layers.set(1);
+    barricadeGroup.add(blipMesh);
+
+    barricadeGroup.position.set(player.position.x, 0, player.position.z);
+    barricadeGroup.userData = { isBarricade: true };
+
+    scene.add(barricadeGroup);
+    barricades.push(barricadeGroup);
+
+    // Update UI
+    updateBarricadeUI();
+}
+
+function updateBarricadeUI() {
+    const el = document.getElementById('barricade-value');
+    if (el) el.innerText = MAX_BARRICADES - barricades.length;
+}
+
+function updateHPUI() {
+    const el = document.getElementById('hp-value');
+    if (el) el.innerText = '❤'.repeat(playerHP) + '♡'.repeat(MAX_HP - playerHP);
+}
 
 // --- VEHICLES ---
 // --- VEHICLES ---
@@ -197,13 +362,40 @@ function spawnVehicle() {
 
     // Main mesh
     const geom = new THREE.BoxGeometry(2, 1, 4);
-    if (spawner.moveAxis === 'x') {
-        geom.rotateY(Math.PI / 2);
-    }
     const color = new THREE.Color().setHSL(Math.random(), 0.8, 0.5);
     const mat = new THREE.MeshStandardMaterial({ color: color });
     const mesh = new THREE.Mesh(geom, mat);
     vehicleGroup.add(mesh);
+
+    // Standardize rotation so +Z is always forward for the vehicle mesh
+    // x axis moves left/right
+    if (spawner.moveAxis === 'x') {
+        if (spawner.dir === 1) { // Moving +X (Right)
+            vehicleGroup.rotation.y = Math.PI / 2;
+        } else { // Moving -X (Left)
+            vehicleGroup.rotation.y = -Math.PI / 2;
+        }
+    } else {
+        if (spawner.dir === 1) { // Moving +Z (Down on screen)
+            vehicleGroup.rotation.y = 0;
+        } else { // Moving -Z (Up on screen)
+            vehicleGroup.rotation.y = Math.PI;
+        }
+    }
+
+    // Blinkers (Indicators) at the front corners
+    const blinkerGeom = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const blinkerMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, visible: false }); // Start hidden
+
+    const leftBlinker = new THREE.Mesh(blinkerGeom, blinkerMat.clone());
+    // Position front-left relative to vehicle (front is +Z, left is +X)
+    leftBlinker.position.set(0.8, 0.2, 1.8);
+    vehicleGroup.add(leftBlinker);
+
+    const rightBlinker = new THREE.Mesh(blinkerGeom, blinkerMat.clone());
+    // Position front-right relative to vehicle (front is +Z, right is -X)
+    rightBlinker.position.set(-0.8, 0.2, 1.8);
+    vehicleGroup.add(rightBlinker);
 
     // Minimap blip
     const blipGeom = new THREE.BoxGeometry(4, 1, 4);
@@ -211,70 +403,117 @@ function spawnVehicle() {
     const blipMesh = new THREE.Mesh(blipGeom, blipMat);
     blipMesh.position.y = 10;
     blipMesh.layers.set(1); // Set to layer 1 so main camera hides it
+    // Reverse the parent rotation so minimap blip is always axis-aligned 
+    // (since vehicleGroup is now rotated)
+    blipMesh.rotation.y = -vehicleGroup.rotation.y;
     vehicleGroup.add(blipMesh);
 
     vehicleGroup.userData = {
         axis: spawner.moveAxis,
         dir: spawner.dir,
-        // Calculate the specific intersections this vehicle will pass
-        checkLights: [], // filled in a moment
-        passedLights: 0
+        checkLights: [],
+        turnPoints: [],
+        passedLights: 0,
+        active: true,
+        leftBlinker: leftBlinker,
+        rightBlinker: rightBlinker
     };
 
-    // Figure out which traffic lights this spawner will encounter based on lane
-    // Each vehicle passes 2 intersections.
-    if (spawner.moveAxis === 'z') {
-        // Vertical road traversing horizontal roads (so we cross roadWidthH)
-        let firstLightZ = (spawner.dir > 0) ? -gridSpacing : gridSpacing;
-        let secondLightZ = (spawner.dir > 0) ? gridSpacing : -gridSpacing;
+    let currAxis = spawner.moveAxis;
+    let currDir = spawner.dir;
+    let currPos = { x: spawner.pos.x, z: spawner.pos.z };
 
-        // Find the light object for this specific x intersection
-        let x = vehicleGroup.position.x > 0 ? gridSpacing : -gridSpacing;
+    // Plan path (max 4 intersections)
+    for (let step = 0; step < 4; step++) {
+        let targetXMatch = Math.abs(currPos.x - (-gridSpacing)) < 10 ? -gridSpacing : (Math.abs(currPos.x - gridSpacing) < 10 ? gridSpacing : null);
+        let targetZMatch = Math.abs(currPos.z - (-gridSpacing)) < 10 ? -gridSpacing : (Math.abs(currPos.z - gridSpacing) < 10 ? gridSpacing : null);
 
-        // Stop line is half the horizontal road width + a buffer
-        let stopDist = (roadWidthH / 2) + 2;
+        let candidates = intersectionCenters.filter(c => {
+            if (currAxis === 'z') {
+                if (c.x !== targetXMatch) return false;
+                let dist = (c.z - currPos.z) * currDir;
+                return dist > 1; // 1 to prevent getting stuck on current
+            } else {
+                if (c.z !== targetZMatch) return false;
+                let dist = (c.x - currPos.x) * currDir;
+                return dist > 1;
+            }
+        });
 
-        let tlX = x + roadWidthV / 2 + 1;
-        let tlZ1 = firstLightZ - roadWidthH / 2 - 1;
-        let tlZ2 = secondLightZ - roadWidthH / 2 - 1;
+        if (candidates.length === 0) break;
+
+        candidates.sort((a, b) => {
+            let distA = currAxis === 'z' ? (a.z - currPos.z) * currDir : (a.x - currPos.x) * currDir;
+            let distB = currAxis === 'z' ? (b.z - currPos.z) * currDir : (b.x - currPos.x) * currDir;
+            return distA - distB;
+        });
+
+        let nextCenter = candidates[0];
+
+        // 50% straight, 25% left, 25% right
+        const rnd = Math.random();
+        let action = 'straight';
+        if (rnd < 0.25) action = 'left';
+        else if (rnd < 0.50) action = 'right';
+
+        let stopDist = currAxis === 'z' ? (roadWidthH / 2) + 2 : (roadWidthV / 2) + 2;
+        let stopCenter = currAxis === 'z' ? nextCenter.z : nextCenter.x;
+        let stopLine = stopCenter - (stopDist * currDir);
+
+        let tlX = nextCenter.x + roadWidthV / 2 + 1;
+        let tlZ = nextCenter.z - roadWidthH / 2 - 1;
+        let lightObj = trafficLights.find(l => Math.abs(l.position.x - tlX) < 5 && Math.abs(l.position.z - tlZ) < 5);
+
+        if (!lightObj) break;
 
         vehicleGroup.userData.checkLights.push({
-            light: trafficLights.find(l => Math.abs(l.position.x - tlX) < 5 && Math.abs(l.position.z - tlZ1) < 5),
-            stopLine: firstLightZ - (stopDist * spawner.dir)
-            // Intersection center for intersection hit detection 
+            light: lightObj,
+            stopLine: stopLine,
+            intersectionCenter: stopCenter,
+            action: action
         });
-        vehicleGroup.userData.checkLights[0].intersectionCenter = firstLightZ;
 
-        vehicleGroup.userData.checkLights.push({
-            light: trafficLights.find(l => Math.abs(l.position.x - tlX) < 5 && Math.abs(l.position.z - tlZ2) < 5),
-            stopLine: secondLightZ - (stopDist * spawner.dir)
-        });
-        vehicleGroup.userData.checkLights[1].intersectionCenter = secondLightZ;
+        if (action !== 'straight') {
+            let newAxis, newDir;
+            if (currAxis === 'z') {
+                newAxis = 'x';
+                newDir = action === 'left' ? (currDir === 1 ? 1 : -1) : (currDir === 1 ? -1 : 1);
+            } else {
+                newAxis = 'z';
+                newDir = action === 'left' ? (currDir === 1 ? -1 : 1) : (currDir === 1 ? 1 : -1);
+            }
 
-    } else {
-        // Horizontal road traversing vertical roads (so we cross roadWidthV)
-        let firstLightX = (spawner.dir > 0) ? -gridSpacing : gridSpacing;
-        let secondLightX = (spawner.dir > 0) ? gridSpacing : -gridSpacing;
+            let newLaneCenter;
+            if (newAxis === 'x') {
+                newLaneCenter = nextCenter.z + (newDir === 1 ? -roadWidthH / 4 : roadWidthH / 4);
+            } else {
+                newLaneCenter = nextCenter.x + (newDir === 1 ? roadWidthV / 4 : -roadWidthV / 4);
+            }
 
-        let z = vehicleGroup.position.z > 0 ? gridSpacing : -gridSpacing;
+            vehicleGroup.userData.turnPoints.push({
+                intersectionCenter: stopCenter,
+                turnValue: newLaneCenter,
+                newAxis: newAxis,
+                newDir: newDir,
+                action: action
+            });
 
-        let stopDist = (roadWidthV / 2) + 2;
-
-        let tlZ = z - roadWidthH / 2 - 1;
-        let tlX1 = firstLightX + roadWidthV / 2 + 1;
-        let tlX2 = secondLightX + roadWidthV / 2 + 1;
-
-        vehicleGroup.userData.checkLights.push({
-            light: trafficLights.find(l => Math.abs(l.position.z - tlZ) < 5 && Math.abs(l.position.x - tlX1) < 5),
-            stopLine: firstLightX - (stopDist * spawner.dir)
-        });
-        vehicleGroup.userData.checkLights[0].intersectionCenter = firstLightX;
-
-        vehicleGroup.userData.checkLights.push({
-            light: trafficLights.find(l => Math.abs(l.position.z - tlZ) < 5 && Math.abs(l.position.x - tlX2) < 5),
-            stopLine: secondLightX - (stopDist * spawner.dir)
-        });
-        vehicleGroup.userData.checkLights[1].intersectionCenter = secondLightX;
+            if (currAxis === 'z') {
+                currPos.z = newLaneCenter;
+                currPos.x = nextCenter.x + (newDir === 1 ? roadWidthV / 4 : -roadWidthV / 4);
+            } else {
+                currPos.x = newLaneCenter;
+                currPos.z = nextCenter.z + (newDir === 1 ? -roadWidthH / 4 : roadWidthH / 4);
+            }
+            currAxis = newAxis;
+            currDir = newDir;
+        } else {
+            if (currAxis === 'z') {
+                currPos.z = nextCenter.z + (stopDist * currDir);
+            } else {
+                currPos.x = nextCenter.x + (stopDist * currDir);
+            }
+        }
     }
 
     scene.add(vehicleGroup);
@@ -391,6 +630,164 @@ function showFloatingText(position, text) {
     }, 1000);
 }
 
+// --- PLAYER CHARACTER UPDATE ---
+function updatePlayer() {
+    if (gameState !== 'playing') return;
+
+    // Move toward target
+    if (playerTarget) {
+        const dx = playerTarget.x - player.position.x;
+        const dz = playerTarget.z - player.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+
+        if (dist > 0.5) {
+            const mx = (dx / dist) * PLAYER_SPEED;
+            const mz = (dz / dist) * PLAYER_SPEED;
+            player.position.x += mx;
+            player.position.z += mz;
+
+            // Face movement direction
+            player.rotation.y = Math.atan2(mx, mz);
+
+            // Simple walk animation: oscillate legs
+            const time = Date.now() * 0.008;
+            const leftLeg = player.children[2]; // left leg
+            const rightLeg = player.children[3]; // right leg
+            const leftArm = player.children[4];
+            const rightArm = player.children[5];
+            if (leftLeg) leftLeg.rotation.x = Math.sin(time) * 0.5;
+            if (rightLeg) rightLeg.rotation.x = -Math.sin(time) * 0.5;
+            if (leftArm) leftArm.rotation.x = -Math.sin(time) * 0.4;
+            if (rightArm) rightArm.rotation.x = Math.sin(time) * 0.4;
+        } else {
+            playerTarget = null;
+            targetIndicator.visible = false;
+
+            // Reset limb rotations
+            player.children[2].rotation.x = 0;
+            player.children[3].rotation.x = 0;
+            player.children[4].rotation.x = 0;
+            player.children[5].rotation.x = 0;
+        }
+    }
+
+    // Invincibility countdown
+    if (playerInvincible > 0) {
+        playerInvincible--;
+        // Blink effect: toggle visibility every 5 frames
+        player.visible = (Math.floor(playerInvincible / 5) % 2 === 0);
+    } else {
+        player.visible = true;
+    }
+
+    // Rotate target indicator
+    if (targetIndicator.visible) {
+        targetIndicator.rotation.z += 0.03;
+    }
+}
+
+function checkPlayerVehicleCollision() {
+    if (gameState !== 'playing' || playerInvincible > 0) return;
+
+    const playerBox = new THREE.Box3();
+    // Create a small box around player position
+    playerBox.setFromCenterAndSize(
+        new THREE.Vector3(player.position.x, 1.5, player.position.z),
+        new THREE.Vector3(2, 4, 2)
+    );
+
+    const vehicleBox = new THREE.Box3();
+
+    for (let i = vehicles.length - 1; i >= 0; i--) {
+        const v = vehicles[i];
+        if (!v.userData.active) continue;
+
+        vehicleBox.setFromObject(v);
+
+        if (playerBox.intersectsBox(vehicleBox)) {
+            // Player takes damage
+            playerHP--;
+            updateHPUI();
+
+            // Knockback: push player away from vehicle
+            const knockDir = new THREE.Vector3(
+                player.position.x - v.position.x,
+                0,
+                player.position.z - v.position.z
+            ).normalize();
+            player.position.x += knockDir.x * 5;
+            player.position.z += knockDir.z * 5;
+            playerTarget = null;
+            targetIndicator.visible = false;
+
+            // Set invincibility (about 2 seconds at 60fps)
+            playerInvincible = 120;
+
+            // Destroy the vehicle (crash)
+            scene.remove(v);
+            v.userData.active = false;
+            vehicles.splice(i, 1);
+
+            // Explosion effect (no score for self-damage)
+            createExplosion(v.position.clone());
+            showFloatingText(v.position.clone(), 'OUCH!');
+
+            // Check game over
+            if (playerHP <= 0) {
+                gameState = 'over';
+                showResult();
+            }
+
+            break; // Only one collision per frame
+        }
+    }
+}
+
+function checkBarricadeVehicleCollision() {
+    if (gameState !== 'playing') return;
+
+    const barricadeBox = new THREE.Box3();
+    const vehicleBox = new THREE.Box3();
+
+    for (let bi = barricades.length - 1; bi >= 0; bi--) {
+        const b = barricades[bi];
+        barricadeBox.setFromCenterAndSize(
+            new THREE.Vector3(b.position.x, 0.75, b.position.z),
+            new THREE.Vector3(4, 1.5, 1.5)
+        );
+
+        for (let vi = vehicles.length - 1; vi >= 0; vi--) {
+            const v = vehicles[vi];
+            if (!v.userData.active) continue;
+
+            vehicleBox.setFromObject(v);
+
+            if (barricadeBox.intersectsBox(vehicleBox)) {
+                // Vehicle crashes into barricade
+                score += 100;
+                document.getElementById('score-value').innerText = score;
+
+                // Explosion
+                const midpoint = v.position.clone().lerp(b.position, 0.3);
+                createExplosion(midpoint);
+                showFloatingText(midpoint, 'CRASH! +100');
+
+                // Remove vehicle
+                scene.remove(v);
+                v.userData.active = false;
+                vehicles.splice(vi, 1);
+
+                // Remove barricade
+                scene.remove(b);
+                barricades.splice(bi, 1);
+                updateBarricadeUI();
+
+                break; // This barricade is gone, move to next
+            }
+        }
+    }
+}
+
 // --- RENDER LOOP ---
 function animate() {
     requestAnimationFrame(animate);
@@ -412,6 +809,11 @@ function animate() {
 
     // --- LOGIC UPDATES ---
     if (gameState === 'playing') {
+        // Update player
+        updatePlayer();
+        checkPlayerVehicleCollision();
+        checkBarricadeVehicleCollision();
+
         // Move vehicles
         for (let i = vehicles.length - 1; i >= 0; i--) {
             const v = vehicles[i];
@@ -425,22 +827,72 @@ function animate() {
                 const nextLightData = data.checkLights[data.passedLights];
                 const distToStop = (nextLightData.stopLine - currentPos) * data.dir;
 
-                // Re-evaluate if past the intersection center to increment passedLights
+                let nextTurn = data.turnPoints.find(t => t.intersectionCenter === nextLightData.intersectionCenter);
+
+                if (nextTurn) {
+                    const distToTurn = (nextTurn.turnValue - currentPos) * data.dir;
+                    if (distToTurn <= 0) {
+                        // Execute Turn
+                        data.axis = nextTurn.newAxis;
+                        data.dir = nextTurn.newDir;
+
+                        if (data.axis === 'x') {
+                            v.position.z = nextTurn.turnValue;
+                            v.rotation.y = data.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+                        } else {
+                            v.position.x = nextTurn.turnValue;
+                            v.rotation.y = data.dir === 1 ? 0 : Math.PI;
+                        }
+
+                        // Update minimap blip reverse rotation
+                        const minimapBlip = v.children.find(c => c.layers.test({ mask: 2 })); // layer 1 has mask 2
+                        if (minimapBlip) {
+                            minimapBlip.rotation.y = -v.rotation.y;
+                        }
+
+                        // Move on to next step immediately
+                        data.passedLights++;
+                        continue;
+                    }
+                }
+
+                // Normal progression (straight crossing)
                 const intersectionCenter = nextLightData.intersectionCenter;
-                if ((currentPos - intersectionCenter) * data.dir > 0) {
+                if (!nextTurn && (currentPos - intersectionCenter) * data.dir > 0) {
                     data.passedLights++;
                 } else {
-                    // If approaching the stop line
+                    // Turn Signal Update (Flashing)
+                    if (distToStop < 40) { // Start blinking when 40 units away from intersection
+                        const isBlinkOn = (Date.now() % 600) < 300;
+                        if (nextLightData.action === 'left') {
+                            data.leftBlinker.material.visible = isBlinkOn;
+                            data.rightBlinker.material.visible = false;
+                        } else if (nextLightData.action === 'right') {
+                            data.rightBlinker.material.visible = isBlinkOn;
+                            data.leftBlinker.material.visible = false;
+                        } else {
+                            data.leftBlinker.material.visible = false;
+                            data.rightBlinker.material.visible = false;
+                        }
+                    } else {
+                        data.leftBlinker.material.visible = false;
+                        data.rightBlinker.material.visible = false;
+                    }
+
+                    // Stoplight check before the intersection
                     const isHorizontal = data.axis === 'x';
                     const lightIsBlueForUs = isHorizontal ? nextLightData.light.userData.horizontalBlue : !nextLightData.light.userData.horizontalBlue;
 
-                    // If the light is red for this lane
                     if (!lightIsBlueForUs) {
                         if (distToStop > 0 && distToStop < speed * 2) {
                             shouldStop = true;
                         }
                     }
                 }
+            } else {
+                // Past all planned intersections, turn blinkers off
+                data.leftBlinker.material.visible = false;
+                data.rightBlinker.material.visible = false;
             }
 
             // Avoid rear-ending cars in the same lane
@@ -634,5 +1086,19 @@ if (restartBtn) {
             lightGroup.userData.horizontalBlue = true;
             lightGroup.userData.visualMat.color.setHex(0x0088ff);
         });
+
+        // Reset player character
+        playerHP = MAX_HP;
+        playerInvincible = 0;
+        player.position.set(0, 0, 0);
+        player.visible = true;
+        playerTarget = null;
+        targetIndicator.visible = false;
+        updateHPUI();
+
+        // Clear barricades
+        barricades.forEach(b => scene.remove(b));
+        barricades.length = 0;
+        updateBarricadeUI();
     });
 }
