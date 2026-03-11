@@ -275,10 +275,10 @@ function createTileSlot(intersectionX, intersectionZ, approachDir) {
             arrowGroup.rotation.y = Math.PI;
             break;
         case 'fromWest': // moving +X
-            arrowGroup.rotation.y = -Math.PI / 2;
+            arrowGroup.rotation.y = Math.PI / 2;
             break;
         case 'fromEast': // moving -X
-            arrowGroup.rotation.y = Math.PI / 2;
+            arrowGroup.rotation.y = -Math.PI / 2;
             break;
     }
 
@@ -462,18 +462,41 @@ function resolveTileDirection(tileDirection, currentAxis, currentDir) {
     if (tileDirection === 'straight') return { axis: currentAxis, dir: currentDir };
 
     let newAxis, newDir;
+    
+    // In THREE.js with our camera: +Z is down (screen bottom), -Z is up (screen top)
+    // +X is right, -X is left.
+    // So if moving +Z (down), a RIGHT turn should go towards -X (driver's right)
+    // Wait, screen relative:
+    // When a car goes down the screen (+Z), its "right" is the screen's left (-X).
+    // Let's make "right" and "left" mean relative to the CAR's forward direction.
+    // If moving +Z (down), Right turn -> -X (left on screen). Left turn -> +X (right on screen).
+    // Let's check the arrow visuals: getArrowRotationOffset('right') is -Math.PI/2.
+    // Base rotation for moving +Z is 0. Arrow points +Z (0).
+    // -Math.PI/2 rotates it so it points towards -X (Left on screen). 
+    // Yes! Right is -X, Left is +X when moving +Z.
+    // So 'right' means clockwise turn in Y-axis! (which is negative rotation)
+    // Let's fix this for all 4 approaches to ensure Arrow matches Car.
+
     if (currentAxis === 'z') {
         newAxis = 'x';
         if (tileDirection === 'right') {
+            // Moving +Z (down), turn Right -> go -X (left on screen)
+            // Moving -Z (up), turn Right -> go +X (right on screen)
             newDir = currentDir === 1 ? -1 : 1;
         } else { // left
+            // Moving +Z (down), turn Left -> go +X (right on screen)
+            // Moving -Z (up), turn Left -> go -X (left on screen)
             newDir = currentDir === 1 ? 1 : -1;
         }
     } else {
         newAxis = 'z';
         if (tileDirection === 'right') {
+            // Moving +X (right), turn Right -> go +Z (down on screen)
+            // Moving -X (left), turn Right -> go -Z (up on screen)
             newDir = currentDir === 1 ? 1 : -1;
         } else { // left
+            // Moving +X (right), turn Left -> go -Z (up on screen)
+            // Moving -X (left), turn Left -> go +Z (down on screen)
             newDir = currentDir === 1 ? -1 : 1;
         }
     }
