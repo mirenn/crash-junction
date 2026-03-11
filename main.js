@@ -856,12 +856,12 @@ function findNextIntersection(vPos, axis, dir, passedIntersections) {
             // Vehicle on a vertical road: match x coordinate
             if (Math.abs(c.x - vPos.x) > roadWidthV / 2 + 2) return false;
             const dist = (c.z - vPos.z) * dir;
-            return dist > 2; // Must be ahead
+            return dist > -2; // Must be ahead or at intersection (allow overlap for turn trigger)
         } else {
             // Vehicle on a horizontal road: match z coordinate
             if (Math.abs(c.z - vPos.z) > roadWidthH / 2 + 2) return false;
             const dist = (c.x - vPos.x) * dir;
-            return dist > 2;
+            return dist > -2; // Must be ahead or at intersection
         }
     });
 
