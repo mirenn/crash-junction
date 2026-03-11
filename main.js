@@ -179,49 +179,171 @@ targetIndicator.position.y = 0.1;
 targetIndicator.visible = false;
 scene.add(targetIndicator);
 
-// --- TRAFFIC LIGHTS ---
-const trafficLights = [];
+// --- DIRECTION TILES ---
+// Each tile slot represents an approach to an intersection from a specific direction.
+// Directions: 'fromNorth' (moving +Z, approaching from north), 'fromSouth' (moving -Z),
+//             'fromWest' (moving +X), 'fromEast' (moving -X)
+const directionTiles = [];
+const tileHitboxes = [];
 
-// Helper to create a single traffic light per intersection
-function createTrafficLight(x, z) {
+// Color mapping for tile directions
+const TILE_COLORS = {
+    straight: 0x0088ff, // Blue
+    right: 0x00cc66,    // Green
+    left: 0xffaa00      // Yellow/Orange
+};
+
+// Create arrow shape for visual indicator
+function createArrowMesh(direction) {
     const group = new THREE.Group();
-    // Position at the top-right corner of the intersection slightly offset
-    group.position.set(x + roadWidthV / 2 + 1, 0.5, z - roadWidthH / 2 - 1);
 
-    // Default state: Horizontal cars can go (Blue), Vertical cars stop (Red)
-    group.userData = { horizontalBlue: true };
+    // Arrow shaft
+    const shaftGeom = new THREE.BoxGeometry(0.8, 0.3, 2.5);
+    const color = TILE_COLORS[direction];
+    const shaftMat = new THREE.MeshStandardMaterial({ color: color, emissive: color, emissiveIntensity: 0.3 });
+    const shaft = new THREE.Mesh(shaftGeom, shaftMat);
+    shaft.position.set(0, 0, -0.3);
+    group.add(shaft);
 
-    // Visual Mesh (the light box)
-    const visualGeom = new THREE.BoxGeometry(1.5, 2, 1.5);
-    const visualMat = new THREE.MeshStandardMaterial({ color: 0x0088ff }); // Start Blue (horizontal go)
-    const visualMesh = new THREE.Mesh(visualGeom, visualMat);
-    group.add(visualMesh);
-    group.userData.visualMat = visualMat;
-
-    // Hitbox Mesh (invisible, larger for easy clicking)
-    const hitboxGeom = new THREE.BoxGeometry(6, 6, 6);
-    const hitboxMat = new THREE.MeshBasicMaterial({ visible: false });
-    const hitboxMesh = new THREE.Mesh(hitboxGeom, hitboxMat);
-    // Mark it as interactable
-    hitboxMesh.userData = { isHitbox: true, parentLight: group };
-    group.add(hitboxMesh);
-
-    scene.add(group);
-    trafficLights.push(group);
+    // Arrow head (triangle using a cone)
+    const headGeom = new THREE.ConeGeometry(1.2, 1.5, 3);
+    const headMat = new THREE.MeshStandardMaterial({ color: color, emissive: color, emissiveIntensity: 0.3 });
+    const head = new THREE.Mesh(headGeom, headMat);
+    head.rotation.x = -Math.PI / 2; // Point forward (+Z)
+    head.position.set(0, 0, 1.5);
+    group.add(head);
 
     return group;
 }
 
-const hitboxes = [];
-// Create 4 traffic lights, one for each intersection
-const tlTopLeft = createTrafficLight(-gridSpacing, -gridSpacing);
-const tlTopRight = createTrafficLight(gridSpacing, -gridSpacing);
-const tlBotLeft = createTrafficLight(-gridSpacing, gridSpacing);
-const tlBotRight = createTrafficLight(gridSpacing, gridSpacing);
+// approachDir: which direction the car is coming FROM (determines rotation of visual)
+// 'fromNorth' = car moving +Z (downward on screen)
+// 'fromSouth' = car moving -Z (upward on screen)
+// 'fromWest'  = car moving +X (rightward)
+// 'fromEast'  = car moving -X (leftward)
+function createTileSlot(intersectionX, intersectionZ, approachDir) {
+    const group = new THREE.Group();
 
-// Collect hitboxes
-trafficLights.forEach(light => {
-    hitboxes.push(light.children[1]);
+    // Position the tile before the intersection on the approach road,
+    // offset to the correct lane where vehicles actually drive.
+    let tileX = intersectionX;
+    let tileZ = intersectionZ;
+    const tileOffset = 15; // Distance from intersection center along approach axis
+
+    switch (approachDir) {
+        case 'fromNorth': // Car comes from top, moving +Z (right lane = +roadWidthV/4)
+            tileZ = intersectionZ - tileOffset;
+            tileX = intersectionX + roadWidthV / 4;
+            break;
+        case 'fromSouth': // Car comes from bottom, moving -Z (right lane = -roadWidthV/4)
+            tileZ = intersectionZ + tileOffset;
+            tileX = intersectionX - roadWidthV / 4;
+            break;
+        case 'fromWest': // Car comes from left, moving +X (right lane = -roadWidthH/4)
+            tileX = intersectionX - tileOffset;
+            tileZ = intersectionZ - roadWidthH / 4;
+            break;
+        case 'fromEast': // Car comes from right, moving -X (right lane = +roadWidthH/4)
+            tileX = intersectionX + tileOffset;
+            tileZ = intersectionZ + roadWidthH / 4;
+            break;
+    }
+
+    group.position.set(tileX, 0.3, tileZ);
+
+    // Base platform
+    const baseGeom = new THREE.BoxGeometry(5, 0.4, 5);
+    const baseMat = new THREE.MeshStandardMaterial({
+        color: TILE_COLORS.straight,
+        transparent: true,
+        opacity: 0.6
+    });
+    const baseMesh = new THREE.Mesh(baseGeom, baseMat);
+    group.add(baseMesh);
+
+    // Arrow visual
+    const arrowGroup = createArrowMesh('straight');
+    arrowGroup.position.y = 0.4;
+
+    // Rotate arrow to match approach direction
+    // Arrow points in the "forward" direction for 'straight' 
+    switch (approachDir) {
+        case 'fromNorth': // moving +Z
+            arrowGroup.rotation.y = 0;
+            break;
+        case 'fromSouth': // moving -Z
+            arrowGroup.rotation.y = Math.PI;
+            break;
+        case 'fromWest': // moving +X
+            arrowGroup.rotation.y = -Math.PI / 2;
+            break;
+        case 'fromEast': // moving -X
+            arrowGroup.rotation.y = Math.PI / 2;
+            break;
+    }
+
+    group.add(arrowGroup);
+
+    // Hitbox (invisible, larger for easy clicking)
+    const hitboxGeom = new THREE.BoxGeometry(6, 6, 6);
+    const hitboxMat = new THREE.MeshBasicMaterial({ visible: false });
+    const hitboxMesh = new THREE.Mesh(hitboxGeom, hitboxMat);
+    hitboxMesh.userData = { isTileHitbox: true, parentTile: group };
+    group.add(hitboxMesh);
+    tileHitboxes.push(hitboxMesh);
+
+    // Store tile data
+    group.userData = {
+        direction: 'straight', // 'straight', 'right', 'left'
+        approachDir: approachDir,
+        intersectionX: intersectionX,
+        intersectionZ: intersectionZ,
+        baseMat: baseMat,
+        arrowGroup: arrowGroup,
+        baseApproachRotation: arrowGroup.rotation.y // Store base rotation for approach direction
+    };
+
+    scene.add(group);
+    directionTiles.push(group);
+
+    return group;
+}
+
+// Helper: get the rotation offset for the arrow based on tile direction
+function getArrowRotationOffset(tileDirection) {
+    switch (tileDirection) {
+        case 'straight': return 0;
+        case 'right': return -Math.PI / 2;  // Turn right
+        case 'left': return Math.PI / 2;    // Turn left
+    }
+    return 0;
+}
+
+// Cycle tile direction and update visuals
+function cycleTileDirection(tileGroup) {
+    const data = tileGroup.userData;
+    const cycle = ['straight', 'right', 'left'];
+    const currentIdx = cycle.indexOf(data.direction);
+    data.direction = cycle[(currentIdx + 1) % cycle.length];
+
+    // Update base color
+    data.baseMat.color.setHex(TILE_COLORS[data.direction]);
+
+    // Update arrow: rebuild it with new color and rotation
+    tileGroup.remove(data.arrowGroup);
+    const newArrow = createArrowMesh(data.direction);
+    newArrow.position.y = 0.4;
+    newArrow.rotation.y = data.baseApproachRotation + getArrowRotationOffset(data.direction);
+    tileGroup.add(newArrow);
+    data.arrowGroup = newArrow;
+}
+
+// Create all tile slots for all 4 intersections × 4 approach directions
+const approachDirs = ['fromNorth', 'fromSouth', 'fromWest', 'fromEast'];
+intersectionCenters.forEach(center => {
+    approachDirs.forEach(dir => {
+        createTileSlot(center.x, center.z, dir);
+    });
 });
 
 // --- INTERACTION (Raycaster) ---
@@ -236,21 +358,12 @@ window.addEventListener('pointerdown', (event) => {
 
     raycaster.setFromCamera(mouse, mainCamera);
 
-    // Priority 1: Traffic light hitboxes
-    const lightIntersects = raycaster.intersectObjects(hitboxes);
-    if (lightIntersects.length > 0) {
-        const lightGroup = lightIntersects[0].object.userData.parentLight;
-
-        // Toggle state
-        lightGroup.userData.horizontalBlue = !lightGroup.userData.horizontalBlue;
-
-        // Update color to reflect horizontal state
-        if (lightGroup.userData.horizontalBlue) {
-            lightGroup.userData.visualMat.color.setHex(0x0088ff); // Blue
-        } else {
-            lightGroup.userData.visualMat.color.setHex(0xff0000); // Red
-        }
-        return; // Don't move player when clicking a light
+    // Priority 1: Direction tile hitboxes
+    const tileIntersects = raycaster.intersectObjects(tileHitboxes);
+    if (tileIntersects.length > 0) {
+        const tileGroup = tileIntersects[0].object.userData.parentTile;
+        cycleTileDirection(tileGroup);
+        return; // Don't move player when clicking a tile
     }
 
     // Priority 2: Click-to-move on ground
@@ -326,11 +439,51 @@ function updateHPUI() {
     if (el) el.innerText = '❤'.repeat(playerHP) + '♡'.repeat(MAX_HP - playerHP);
 }
 
-// --- VEHICLES ---
+// --- Helper: Find the direction tile for a given intersection and approach ---
+function findTileForApproach(intersectionX, intersectionZ, approachDir) {
+    return directionTiles.find(t =>
+        t.userData.intersectionX === intersectionX &&
+        t.userData.intersectionZ === intersectionZ &&
+        t.userData.approachDir === approachDir
+    );
+}
+
+// --- Helper: Determine the approach direction from vehicle axis/dir ---
+function getApproachDir(axis, dir) {
+    if (axis === 'z' && dir === 1) return 'fromNorth';   // Moving +Z = coming from north
+    if (axis === 'z' && dir === -1) return 'fromSouth';  // Moving -Z = coming from south
+    if (axis === 'x' && dir === 1) return 'fromWest';    // Moving +X = coming from west
+    if (axis === 'x' && dir === -1) return 'fromEast';   // Moving -X = coming from east
+    return 'fromNorth';
+}
+
+// --- Helper: Convert tile direction to world turn for a given approach ---
+function resolveTileDirection(tileDirection, currentAxis, currentDir) {
+    if (tileDirection === 'straight') return { axis: currentAxis, dir: currentDir };
+
+    let newAxis, newDir;
+    if (currentAxis === 'z') {
+        newAxis = 'x';
+        if (tileDirection === 'right') {
+            newDir = currentDir === 1 ? -1 : 1;
+        } else { // left
+            newDir = currentDir === 1 ? 1 : -1;
+        }
+    } else {
+        newAxis = 'z';
+        if (tileDirection === 'right') {
+            newDir = currentDir === 1 ? 1 : -1;
+        } else { // left
+            newDir = currentDir === 1 ? -1 : 1;
+        }
+    }
+    return { axis: newAxis, dir: newDir };
+}
+
 // --- VEHICLES ---
 const vehicles = [];
 const spawnDist = 70; // Spawn distance (edge of the screen map)
-const speed = 0.2; // Vehicle speed (slowed down from 0.3)
+const speed = 0.2; // Vehicle speed
 
 
 // 8 Spawners: 2 ends for each of the 4 roads.
@@ -411,110 +564,14 @@ function spawnVehicle() {
     vehicleGroup.userData = {
         axis: spawner.moveAxis,
         dir: spawner.dir,
-        checkLights: [],
-        turnPoints: [],
-        passedLights: 0,
         active: true,
         leftBlinker: leftBlinker,
-        rightBlinker: rightBlinker
+        rightBlinker: rightBlinker,
+        // Dynamic pathing: track which intersections we've already passed through
+        passedIntersections: [], // [{x, z}] for intersections already handled
+        currentTurnAction: null, // null or {action, turnCenter, turnValue, newAxis, newDir}
+        isTurning: false
     };
-
-    let currAxis = spawner.moveAxis;
-    let currDir = spawner.dir;
-    let currPos = { x: spawner.pos.x, z: spawner.pos.z };
-
-    // Plan path (max 4 intersections)
-    for (let step = 0; step < 4; step++) {
-        let targetXMatch = Math.abs(currPos.x - (-gridSpacing)) < 10 ? -gridSpacing : (Math.abs(currPos.x - gridSpacing) < 10 ? gridSpacing : null);
-        let targetZMatch = Math.abs(currPos.z - (-gridSpacing)) < 10 ? -gridSpacing : (Math.abs(currPos.z - gridSpacing) < 10 ? gridSpacing : null);
-
-        let candidates = intersectionCenters.filter(c => {
-            if (currAxis === 'z') {
-                if (c.x !== targetXMatch) return false;
-                let dist = (c.z - currPos.z) * currDir;
-                return dist > 1; // 1 to prevent getting stuck on current
-            } else {
-                if (c.z !== targetZMatch) return false;
-                let dist = (c.x - currPos.x) * currDir;
-                return dist > 1;
-            }
-        });
-
-        if (candidates.length === 0) break;
-
-        candidates.sort((a, b) => {
-            let distA = currAxis === 'z' ? (a.z - currPos.z) * currDir : (a.x - currPos.x) * currDir;
-            let distB = currAxis === 'z' ? (b.z - currPos.z) * currDir : (b.x - currPos.x) * currDir;
-            return distA - distB;
-        });
-
-        let nextCenter = candidates[0];
-
-        // 50% straight, 25% left, 25% right
-        const rnd = Math.random();
-        let action = 'straight';
-        if (rnd < 0.25) action = 'left';
-        else if (rnd < 0.50) action = 'right';
-
-        let stopDist = currAxis === 'z' ? (roadWidthH / 2) + 2 : (roadWidthV / 2) + 2;
-        let stopCenter = currAxis === 'z' ? nextCenter.z : nextCenter.x;
-        let stopLine = stopCenter - (stopDist * currDir);
-
-        let tlX = nextCenter.x + roadWidthV / 2 + 1;
-        let tlZ = nextCenter.z - roadWidthH / 2 - 1;
-        let lightObj = trafficLights.find(l => Math.abs(l.position.x - tlX) < 5 && Math.abs(l.position.z - tlZ) < 5);
-
-        if (!lightObj) break;
-
-        vehicleGroup.userData.checkLights.push({
-            light: lightObj,
-            stopLine: stopLine,
-            intersectionCenter: stopCenter,
-            action: action
-        });
-
-        if (action !== 'straight') {
-            let newAxis, newDir;
-            if (currAxis === 'z') {
-                newAxis = 'x';
-                newDir = action === 'left' ? (currDir === 1 ? 1 : -1) : (currDir === 1 ? -1 : 1);
-            } else {
-                newAxis = 'z';
-                newDir = action === 'left' ? (currDir === 1 ? -1 : 1) : (currDir === 1 ? 1 : -1);
-            }
-
-            let newLaneCenter;
-            if (newAxis === 'x') {
-                newLaneCenter = nextCenter.z + (newDir === 1 ? -roadWidthH / 4 : roadWidthH / 4);
-            } else {
-                newLaneCenter = nextCenter.x + (newDir === 1 ? roadWidthV / 4 : -roadWidthV / 4);
-            }
-
-            vehicleGroup.userData.turnPoints.push({
-                intersectionCenter: stopCenter,
-                turnValue: newLaneCenter,
-                newAxis: newAxis,
-                newDir: newDir,
-                action: action
-            });
-
-            if (currAxis === 'z') {
-                currPos.z = newLaneCenter;
-                currPos.x = nextCenter.x + (newDir === 1 ? roadWidthV / 4 : -roadWidthV / 4);
-            } else {
-                currPos.x = newLaneCenter;
-                currPos.z = nextCenter.z + (newDir === 1 ? -roadWidthH / 4 : roadWidthH / 4);
-            }
-            currAxis = newAxis;
-            currDir = newDir;
-        } else {
-            if (currAxis === 'z') {
-                currPos.z = nextCenter.z + (stopDist * currDir);
-            } else {
-                currPos.x = nextCenter.x + (stopDist * currDir);
-            }
-        }
-    }
 
     scene.add(vehicleGroup);
     vehicles.push(vehicleGroup);
@@ -788,6 +845,38 @@ function checkBarricadeVehicleCollision() {
     }
 }
 
+// --- Helper: Find the next intersection ahead for a vehicle ---
+function findNextIntersection(vPos, axis, dir, passedIntersections) {
+    let candidates = intersectionCenters.filter(c => {
+        // Check if already passed
+        const alreadyPassed = passedIntersections.some(p => p.x === c.x && p.z === c.z);
+        if (alreadyPassed) return false;
+
+        if (axis === 'z') {
+            // Vehicle on a vertical road: match x coordinate
+            if (Math.abs(c.x - vPos.x) > roadWidthV / 2 + 2) return false;
+            const dist = (c.z - vPos.z) * dir;
+            return dist > 2; // Must be ahead
+        } else {
+            // Vehicle on a horizontal road: match z coordinate
+            if (Math.abs(c.z - vPos.z) > roadWidthH / 2 + 2) return false;
+            const dist = (c.x - vPos.x) * dir;
+            return dist > 2;
+        }
+    });
+
+    if (candidates.length === 0) return null;
+
+    // Sort by distance, pick closest
+    candidates.sort((a, b) => {
+        const distA = axis === 'z' ? (a.z - vPos.z) * dir : (a.x - vPos.x) * dir;
+        const distB = axis === 'z' ? (b.z - vPos.z) * dir : (b.x - vPos.x) * dir;
+        return distA - distB;
+    });
+
+    return candidates[0];
+}
+
 // --- RENDER LOOP ---
 function animate() {
     requestAnimationFrame(animate);
@@ -818,108 +907,110 @@ function animate() {
         for (let i = vehicles.length - 1; i >= 0; i--) {
             const v = vehicles[i];
             const data = v.userData;
-            const currentPos = v.position[data.axis];
+            if (!data.active) continue;
 
-            let shouldStop = false;
+            // --- Dynamic Tile-Based Pathing ---
+            // Check if we're approaching an intersection and need to read a tile
+            const nextIntersection = findNextIntersection(
+                { x: v.position.x, z: v.position.z },
+                data.axis, data.dir, data.passedIntersections
+            );
 
-            // Find the next intersection the vehicle is approaching
-            if (data.passedLights < data.checkLights.length) {
-                const nextLightData = data.checkLights[data.passedLights];
-                const distToStop = (nextLightData.stopLine - currentPos) * data.dir;
+            if (nextIntersection && !data.isTurning) {
+                const distToCenter = data.axis === 'z'
+                    ? (nextIntersection.z - v.position.z) * data.dir
+                    : (nextIntersection.x - v.position.x) * data.dir;
 
-                let nextTurn = data.turnPoints.find(t => t.intersectionCenter === nextLightData.intersectionCenter);
+                // When we're close enough to the intersection center, read the tile and execute
+                const turnTriggerDist = 2; // Distance to center where we commit to direction
 
-                if (nextTurn) {
-                    const distToTurn = (nextTurn.turnValue - currentPos) * data.dir;
-                    if (distToTurn <= 0) {
-                        // Execute Turn
-                        data.axis = nextTurn.newAxis;
-                        data.dir = nextTurn.newDir;
+                if (distToCenter < turnTriggerDist && distToCenter > -2) {
+                    // Read the tile for this approach
+                    const approachDir = getApproachDir(data.axis, data.dir);
+                    const tile = findTileForApproach(nextIntersection.x, nextIntersection.z, approachDir);
 
+                    const tileDirection = tile ? tile.userData.direction : 'straight';
+                    const resolved = resolveTileDirection(tileDirection, data.axis, data.dir);
+
+                    // Mark this intersection as passed
+                    data.passedIntersections.push({ x: nextIntersection.x, z: nextIntersection.z });
+
+                    if (tileDirection !== 'straight') {
+                        // Execute turn
+                        data.axis = resolved.axis;
+                        data.dir = resolved.dir;
+
+                        // Snap to lane center
                         if (data.axis === 'x') {
-                            v.position.z = nextTurn.turnValue;
+                            // Now moving horizontally, snap z to lane center
+                            v.position.z = nextIntersection.z + (data.dir === 1 ? -roadWidthH / 4 : roadWidthH / 4);
                             v.rotation.y = data.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
                         } else {
-                            v.position.x = nextTurn.turnValue;
+                            // Now moving vertically, snap x to lane center
+                            v.position.x = nextIntersection.x + (data.dir === 1 ? roadWidthV / 4 : -roadWidthV / 4);
                             v.rotation.y = data.dir === 1 ? 0 : Math.PI;
                         }
 
                         // Update minimap blip reverse rotation
-                        const minimapBlip = v.children.find(c => c.layers.test({ mask: 2 })); // layer 1 has mask 2
+                        const minimapBlip = v.children.find(c => c.layers.test({ mask: 2 }));
                         if (minimapBlip) {
                             minimapBlip.rotation.y = -v.rotation.y;
                         }
-
-                        // Move on to next step immediately
-                        data.passedLights++;
-                        continue;
                     }
+
+                    // Turn blinkers off after passing
+                    data.leftBlinker.material.visible = false;
+                    data.rightBlinker.material.visible = false;
                 }
 
-                // Normal progression (straight crossing)
-                const intersectionCenter = nextLightData.intersectionCenter;
-                if (!nextTurn && (currentPos - intersectionCenter) * data.dir > 0) {
-                    data.passedLights++;
-                } else {
-                    // Turn Signal Update (Flashing)
-                    if (distToStop < 40) { // Start blinking when 40 units away from intersection
-                        const isBlinkOn = (Date.now() % 600) < 300;
-                        if (nextLightData.action === 'left') {
-                            data.leftBlinker.material.visible = isBlinkOn;
-                            data.rightBlinker.material.visible = false;
-                        } else if (nextLightData.action === 'right') {
-                            data.rightBlinker.material.visible = isBlinkOn;
-                            data.leftBlinker.material.visible = false;
-                        } else {
-                            data.leftBlinker.material.visible = false;
-                            data.rightBlinker.material.visible = false;
-                        }
+                // Blinker logic: show blinkers when approaching intersection
+                if (distToCenter > 0 && distToCenter < 35) {
+                    const approachDir = getApproachDir(data.axis, data.dir);
+                    const tile = findTileForApproach(nextIntersection.x, nextIntersection.z, approachDir);
+                    const tileDir = tile ? tile.userData.direction : 'straight';
+
+                    const isBlinkOn = (Date.now() % 600) < 300;
+                    if (tileDir === 'left') {
+                        data.leftBlinker.material.visible = isBlinkOn;
+                        data.rightBlinker.material.visible = false;
+                    } else if (tileDir === 'right') {
+                        data.rightBlinker.material.visible = isBlinkOn;
+                        data.leftBlinker.material.visible = false;
                     } else {
                         data.leftBlinker.material.visible = false;
                         data.rightBlinker.material.visible = false;
                     }
-
-                    // Stoplight check before the intersection
-                    const isHorizontal = data.axis === 'x';
-                    const lightIsBlueForUs = isHorizontal ? nextLightData.light.userData.horizontalBlue : !nextLightData.light.userData.horizontalBlue;
-
-                    if (!lightIsBlueForUs) {
-                        if (distToStop > 0 && distToStop < speed * 2) {
-                            shouldStop = true;
-                        }
-                    }
                 }
-            } else {
-                // Past all planned intersections, turn blinkers off
+            } else if (!nextIntersection) {
+                // No more intersections ahead, ensure blinkers off
                 data.leftBlinker.material.visible = false;
                 data.rightBlinker.material.visible = false;
             }
 
-            // Avoid rear-ending cars in the same lane
-            if (!shouldStop) {
-                let vehicleAheadDistance = Infinity;
-                for (let j = 0; j < vehicles.length; j++) {
-                    if (i === j) continue;
-                    const vB = vehicles[j];
-                    const dataB = vB.userData;
+            // --- Avoid rear-ending cars in the same lane ---
+            let shouldStop = false;
+            let vehicleAheadDistance = Infinity;
+            for (let j = 0; j < vehicles.length; j++) {
+                if (i === j) continue;
+                const vB = vehicles[j];
+                const dataB = vB.userData;
 
-                    // Check same axis and same direction
-                    if (data.axis === dataB.axis && data.dir === dataB.dir) {
-                        const orthoAxis = data.axis === 'x' ? 'z' : 'x';
-                        // Check if in the same lane (using a small tolerance)
-                        if (Math.abs(v.position[orthoAxis] - vB.position[orthoAxis]) < 1) {
-                            const dist = (vB.position[data.axis] - currentPos) * data.dir;
-                            // If vB is physically ahead and closer than the closest found so far
-                            if (dist > 0 && dist < vehicleAheadDistance) {
-                                vehicleAheadDistance = dist;
-                            }
+                // Check same axis and same direction
+                if (data.axis === dataB.axis && data.dir === dataB.dir) {
+                    const orthoAxis = data.axis === 'x' ? 'z' : 'x';
+                    // Check if in the same lane (using a small tolerance)
+                    if (Math.abs(v.position[orthoAxis] - vB.position[orthoAxis]) < 1) {
+                        const dist = (vB.position[data.axis] - v.position[data.axis]) * data.dir;
+                        // If vB is physically ahead and closer than the closest found so far
+                        if (dist > 0 && dist < vehicleAheadDistance) {
+                            vehicleAheadDistance = dist;
                         }
                     }
                 }
-                // Vehicle length is 4 units. Gap is 1 unit.
-                if (vehicleAheadDistance < 5) {
-                    shouldStop = true;
-                }
+            }
+            // Vehicle length is 4 units. Gap is 1 unit.
+            if (vehicleAheadDistance < 5) {
+                shouldStop = true;
             }
 
             if (!shouldStop) {
@@ -1081,10 +1172,13 @@ if (restartBtn) {
         });
         explosions.length = 0;
 
-        // Reset traffic lights
-        trafficLights.forEach(lightGroup => {
-            lightGroup.userData.horizontalBlue = true;
-            lightGroup.userData.visualMat.color.setHex(0x0088ff);
+        // Reset direction tiles to 'straight'
+        directionTiles.forEach(tileGroup => {
+            const data = tileGroup.userData;
+            // Reset to straight
+            while (data.direction !== 'straight') {
+                cycleTileDirection(tileGroup);
+            }
         });
 
         // Reset player character
